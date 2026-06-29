@@ -219,7 +219,7 @@ class ADF:
                   self.interpolate(te, ne, "EXCIT", wl) * nh*ne
                 + self.interpolate(te, ne, "RECOM", wl) * ne*ne
                     
-                )* self.inv4pi
+                )* self.inv4pi*1e-6
             rows.append(row)
 
         return np.vstack(rows)
@@ -233,7 +233,7 @@ class ADF:
                   self.interpolate_pt(te, ne, "EXCIT", wl) * nh*ne
                 + self.interpolate_pt(te, ne, "RECOM", wl) * ne*ne
                     
-                )* self.inv4pi
+                )* self.inv4pi*1e-6
             rows.append(row)
 
         return pt.stack(rows)
