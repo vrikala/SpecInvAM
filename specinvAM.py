@@ -1,5 +1,6 @@
 from amread import *
 from amdata import *
+from adasdata import *
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -18,8 +19,8 @@ class SpecInvAM():
     def __init__(self, atomic_emission_list: list[np.ndarray[np.float64]],atomic_transitions_list: list[tuple[int, int]], mol_emission: np.ndarray = None, mol_transition = "fulcher", **kwargs):
         assert len(atomic_emission_list)==len(atomic_transitions_list), "emission list must have the same length as transition list"
         
-        self.N = atomic_emission_list[0].flatten().shape[0]
-        self.atomic_emission_dict = {trans: atomic_emission_list[i].flatten() for i, trans in enumerate(atomic_transitions_list)}
+        self.N = atomic_emission_list[0].shape[0]
+        self.atomic_emission_dict = {trans: atomic_emission_list[i] for i, trans in enumerate(atomic_transitions_list)}
         self.atomic_emission_arr = np.vstack(atomic_emission_list)
         if mol_emission is None:
             print("No molecular emission provided, disabling molecular contributions")
@@ -41,6 +42,7 @@ class SpecInvAM():
         self.AM_data = AM_data(atomic_transitions_list, mol_transition, h_neg = self.h_neg, h3_pos = self.h3_pos)
         self.AM_data_pt = AM_data_pt(atomic_transitions_list, mol_transition, h_neg = self.h_neg, h3_pos = self.h3_pos)
 
+        self.adasdata = ADF(atomic_transitions_list, discard_low_N = True) # use ADAS for N>=7
 
     def run_MCMC(self, **kwargs):
         """
@@ -69,23 +71,25 @@ class SpecInvAM():
 
         if (self.mol_contrib and self.mol_transition is not None):
             am_mcmc = self.AM_MCMC # Fulcher constrained
-            data = np.vstack((self.atomic_emission_arr, self.mol_emission_arr)).flatten()
-            data_cov = np.diag((data_uncertainty*data.flatten())**2)
-
+            data = np.vstack((self.atomic_emission_arr, self.mol_emission_arr))
         elif self.mol_contrib:
             am_mcmc = self.AM_MCMC_nm # Only atomic constrained
-            data = self.atomic_emission_arr.flatten()
-            data_cov = np.diag((data_uncertainty*data.flatten())**2)
+            data = self.atomic_emission_arr
         else:
             am_mcmc = self.AM_MCMC_atomic # Only atomic constrained only exc. + rec.
-            data = self.atomic_emission_arr.flatten()
-            data_cov = np.diag((data_uncertainty*data.flatten())**2)
-
+            data = self.atomic_emission_arr
         
         if samples_n>0:
+            data = data.flatten()
+            data_cov = np.diag((data_uncertainty*data)**2)
             samples = np.random.multivariate_normal(data, data_cov, samples_n)
         else:
+            # TODO
+            data
+            data_cov = np.cov(data)
             samples = data
+
+
         with model:
             te = kwargs.get("te_distribution", pymc.Uniform("te", np.log10(0.5), np.log10(60), size = self.N))
             ne= kwargs.get("ne_distribution",pymc.Uniform("ne", 17, 22, size = self.N))
@@ -106,10 +110,12 @@ class SpecInvAM():
         nh2_ = pt.power(10, nh2)
 
         res_a = self.AM_data_pt.calc_photon_rates_mol(te_, ne_, nh_, nh2_)
+        res_a_adas = self.adasdata.calc_photon_rates_pt(te_, ne_, nh_)
         res_mol = self.AM_data_pt.calc_mol_band_photon_rate(te_, ne_, nh_, nh2_)
 
         return pt.concatenate([
             pt.flatten(res_a),
+            pt.flatten(res_a_adas),
             pt.flatten(res_mol)
         ])
     
@@ -121,10 +127,12 @@ class SpecInvAM():
         nh2_ = pt.power(10, nh2)
 
         res_a = self.AM_data_pt.calc_photon_rates_mol(te_, ne_, nh_, nh2_)
-
-        return pt.flatten(res_a)
+        res_a_adas = self.adasdata.calc_photon_rates_pt(te_, ne_, nh_)
+        return pt.concatenate([
+            pt.flatten(res_a),
+            pt.flatten(res_a_adas)
+        ])
     
-
     def AM_MCMC_atomic(self, te, ne, nh, nh2):
 
         te_ = pt.power(10, te)
@@ -132,9 +140,14 @@ class SpecInvAM():
         nh_ = pt.power(10, nh)
         nh2_ = pt.power(10, nh2)
 
-        res_a = self.AM_data_pt.calc_photon_rates_no_mol(te_, ne_, nh_, nh2_)
-
-        return pt.flatten(res_a)
+        
+        res_a = self.AM_data_pt.calc_photon_rates_mol(te_, ne_, nh_, nh2_)
+        res_a_adas = self.adasdata.calc_photon_rates_pt(te_, ne_, nh_)
+        return pt.concatenate([
+            pt.flatten(res_a),
+            pt.flatten(res_a_adas)
+        ])
+        
 
     def residual(self, p):
         p_ = 10**p
@@ -326,7 +339,7 @@ if __name__ == "__main__":
     print(np.abs(r-r_true)/r_true)
     '''
     
-    n = 5
+    n = 10
     Te = np.random.uniform(5, 30, n)
 
     ne = np.random.uniform(1e18, 5e20, n)
@@ -336,10 +349,13 @@ if __name__ == "__main__":
     nh2 = np.random.uniform(1e16, 1e20, n)
 
     r_true = np.vstack((Te, ne, nh, nh2))
-    transitions = [(3,2), (5, 2), (6,2)]
-    em = [calc_photon_rate(trans, Te, ne, nh, mol_n_density = nh2) for trans in transitions]
+    am_transitions = [(3,2), (5, 2)]#, (6,2)]
+    em = [calc_photon_rate(trans, Te, ne, nh, mol_n_density = nh2) for trans in am_transitions]
+    adf = ADF([(7,2)])
+    em72 = adf.calc_photon_rates(Te, ne, nh)
+    em += [em72]
     fu, _ = calc_H2_band_emission(Te, ne, nh2)
-    spec = SpecInvAM(em, transitions, mol_transition=None, force_mol_contrib = True)
+    spec = SpecInvAM(em, am_transitions + [(7,2)], mol_transition=None, force_mol_contrib = True)
 
     #res = spec.lsq()
     model = pymc.Model()

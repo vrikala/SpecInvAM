@@ -5,7 +5,16 @@ import pytensor.tensor as pt
 class AM_data():
     inv4pi = 1/(4*np.pi)
     def __init__(self, atomic_transitions_list: list[tuple[int, int]], mol_transition = "fulcher", **kwargs):
-        self.atomic_transitions_list = atomic_transitions_list
+        
+
+        trans_to_keep = []
+        for i, trans in enumerate(atomic_transitions_list):
+            if trans[0] > 6:
+                print(f"discarding line {trans} (Upper state not found in AMJUEL)")
+                continue
+            else:
+                trans_to_keep.append(trans)
+        self.atomic_transitions_list = trans_to_keep
         self.mol_transition = mol_transition
 
         self.A_coeffs = np.array([A_coeff(trans) for trans in self.atomic_transitions_list])
@@ -192,7 +201,14 @@ class AM_data_pt():
             return pt.exp(pt.sum(cross_sections, axis=0))
         
     def __init__(self, atomic_transitions_list: list[tuple[int, int]], mol_transition = "fulcher", **kwargs):
-        self.atomic_transitions_list = atomic_transitions_list
+        trans_to_keep = []
+        for i, trans in enumerate(atomic_transitions_list):
+            if trans[0] > 6:
+                print(f"discarding line {trans} (Upper state not found in AMJUEL)")
+                continue
+            else:
+                trans_to_keep.append(trans)
+        self.atomic_transitions_list = trans_to_keep
         self.mol_transition = mol_transition
 
         self.A_coeffs = np.array([A_coeff(trans) for trans in self.atomic_transitions_list])
